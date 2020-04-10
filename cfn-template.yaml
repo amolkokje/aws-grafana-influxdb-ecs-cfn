@@ -126,3 +126,35 @@ Resources:
             docker rm $(docker ps -a -q)
             sudo docker run --name ecs-agent --detach=true --restart=on-failure:10 --volume=/var/run:/var/run --volume=/var/log/ecs/:/log --volume=/var/lib/ecs/data:/data --volume=/etc/ecs:/etc/ecs --net=host --env-file=/etc/ecs/ecs.config amazon/amazon-ecs-agent:latest
 
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      ContainerDefinitions:
+        - Name: nginx
+          Image: nginx
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+          Cpu: 102
+          Memory: 50
+
+
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ECSTaskDefinition
+      - ECSContainerInstance
+    Properties:
+      ServiceName: !Ref AWS::StackName
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: EC2
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+
+
+
