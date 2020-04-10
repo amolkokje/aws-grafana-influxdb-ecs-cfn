@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: abc
+Description: CloudFormation templates to deploy Grafana and InfluxDB containers on ECS cluster
 
 Mappings:
+  # Mapping to store the region to ECS optimized AMI mapping
   RegionECSOptimizedAMI:
     us-east-2:
       AMI: ami-008c5ba1857e0fdec
@@ -11,32 +12,36 @@ Mappings:
 
 Parameters:
   ServerConfigBucketName:
-    Description: Server Config files. TODO - create on fly
+    Description: >
+      Name of S3 bucket containining server configuration files. Upload the files to these bucket before
+      starting the deployment.
     Type: String
-    Default: vesta-influxdb-grafana-config
-
+    Default: influxdb-grafana-config
 
   KeyName:
-    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
-    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance.
+    Type: AWS::EC2::KeyPair::KeyName
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
 
   SubnetName:
     Type: AWS::EC2::Subnet::Id
-    Description: Subnet Identifier
+    Description: Subnet Identifier of the subnet where the Container Instance will be deployed.
 
   VpcName:
     Type: AWS::EC2::VPC::Id
-    Description: VPC Identifier
+    Description: VPC Identifier of the VPC where the Container Instance will be deployed.
 
   InstanceType:
-    Description: ECS instance type
+    Description: ECS Container Instance Type
     Type: String
     Default: m5ad.4xlarge
-    ConstraintDescription: must be a valid EC2 instance type.
+    ConstraintDescription: >
+      Must be a valid EC2 instance type. Also should be able to support the Grafana and InfluxDB container CPU/Memory
+      requirements, or else the stack deployment will get stuck and will never complete as the ECS service will keep
+      searching for availability of a suitable Container Instance which satisfies the minimum requirements.
 
   AccessLocation:
-    Description: The IP address range that can be used to access the stack
+    Description: The IP address range that can be used to access the Grafana and InfluxDB endpoints.
     Type: String
     MinLength: '9'
     MaxLength: '18'
@@ -53,7 +58,7 @@ Resources:
   ECSInstanceSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: Enable access to Container Instance
+      GroupDescription: Enable access to ECS Container Instance
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: '22'
@@ -131,25 +136,33 @@ Resources:
     Properties:
       Family: !Ref AWS::StackName
       Volumes:
+        # Contains all dashboard .json files
         - Host:
             SourcePath: '/data/grafana/dashboards'
           Name: 'grafana-dashboards'
+        # Grafana server custom configuration file
         - Host:
             SourcePath: '/data/grafana/custom.ini'
           Name: 'grafana-config'
+        # Grafana dashboard provisioning
         - Host:
             SourcePath: '/data/provisioning'
           Name: 'grafana-provisioning'
+        # InfluxDB data drive
         - Host:
             SourcePath: '/data/influxdbdata'
           Name: 'influxdb-data'
 
       ContainerDefinitions:
         - Name: grafana
-          Image: grafana/grafana:6.3.4
+          Image: grafana/grafana:6.3.4  # for latest version, use 'grafana/grafana'
+          # Map to host port on which traffic is allowed using the Security Group
           PortMappings:
             - ContainerPort: 3000
               HostPort: 443
+          HealthCheck:
+            Command: [ "CMD-SHELL", "curl -G http://localhost:3000/api/health || exit 1" ]
+            Interval: 10
           Cpu: 1024
           Memory: 2048
           MountPoints:
@@ -160,26 +173,55 @@ Resources:
             - SourceVolume: 'grafana-provisioning'
               ContainerPath: '/etc/grafana/provisioning'
           Environment:
+            # Env Vars for custom Grafana configuration
             - Name: 'GF_SECURITY_ADMIN_USER'
               Value: 'amol'
             - Name: 'GF_SECURITY_ADMIN_PASSWORD'
               Value: 'amol'
+            - Name: 'GF_INSTALL_PLUGINS'
+              Value: 'grafana-clock-panel,briangann-gauge-panel,natel-plotly-panel,grafana-simple-json-datasource'
+            # Env Vars which are used by provisioning to configure the InfluxDB data source on Grafana
+            # Ensure the creds here are the same as what are set for InfluxDB container
+            - Name: 'INFLUXDB_USER'
+              Value: 'amol'
+            - Name: 'INFLUXDB_PASSWORD'
+              Value: 'amol'
+            - Name: 'INFLUXDB_DATA_PORT'
+              Value: '8086'
+            - Name: 'INFLUXDB_URL'
+              Value: !Sub
+                       - http://${InstancePrivateIP}:80
+                       - { InstancePrivateIP: !GetAtt ECSContainerInstance.PrivateIp }
+            # This is to add the data source for this database by default on start up
+            - Name: 'INFLUXDB_DB'
+              Value: 'Atop_Uploads'
 
         - Name: influxdb
-          Image: influxdb
+          Image: influxdb:1.7.7  # for latest version, use 'influxdb'
+          # Map to host port on which traffic is allowed using the Security Group
           PortMappings:
             - ContainerPort: 8086
               HostPort: 80
+          HealthCheck:
+            Command: [ "CMD-SHELL", "curl -G http://localhost:8086/ping || exit 1" ]
+            Interval: 10
           Cpu: 4096
           Memory: 4096
           MountPoints:
             - SourceVolume: 'influxdb-data'
               ContainerPath: '/var/lib/influxdb"'
-
-
-
-
-
+          Environment:
+            - Name: 'INFLUXDB_ADMIN_USER'
+              Value: 'amol'
+            - Name: 'INFLUXDB_ADMIN_PASSWORD'
+              Value: 'amol'
+            - Name: 'INFLUXDB_DATA_ENGINE'
+              Value: 'tsm1'
+            - Name: 'INFLUXDB_REPORTING_DISABLED'
+              Value: 'false'
+            # This database is created by default on start up
+            - Name: 'INFLUXDB_DB'
+              Value: 'Atop_Uploads'
 
 
   ECSService:
@@ -196,6 +238,3 @@ Resources:
       DeploymentConfiguration:
         MaximumPercent: 200
         MinimumHealthyPercent: 100
-
-
-
