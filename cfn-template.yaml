@@ -32,7 +32,7 @@ Parameters:
   InstanceType:
     Description: ECS instance type
     Type: String
-    Default: t2.micro
+    Default: m5ad.4xlarge
     ConstraintDescription: must be a valid EC2 instance type.
 
   AccessLocation:
@@ -130,14 +130,55 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Ref AWS::StackName
+      Volumes:
+        - Host:
+            SourcePath: '/data/grafana/dashboards'
+          Name: 'grafana-dashboards'
+        - Host:
+            SourcePath: '/data/grafana/custom.ini'
+          Name: 'grafana-config'
+        - Host:
+            SourcePath: '/data/provisioning'
+          Name: 'grafana-provisioning'
+        - Host:
+            SourcePath: '/data/influxdbdata'
+          Name: 'influxdb-data'
+
       ContainerDefinitions:
-        - Name: nginx
-          Image: nginx
+        - Name: grafana
+          Image: grafana/grafana:6.3.4
           PortMappings:
-            - ContainerPort: 80
+            - ContainerPort: 3000
+              HostPort: 443
+          Cpu: 1024
+          Memory: 2048
+          MountPoints:
+            - SourceVolume: 'grafana-dashboards'
+              ContainerPath: '/var/lib/grafana/dashboards'
+            - SourceVolume: 'grafana-config'
+              ContainerPath: '/etc/grafana/custom.ini'
+            - SourceVolume: 'grafana-provisioning'
+              ContainerPath: '/etc/grafana/provisioning'
+          Environment:
+            - Name: 'GF_SECURITY_ADMIN_USER'
+              Value: 'amol'
+            - Name: 'GF_SECURITY_ADMIN_PASSWORD'
+              Value: 'amol'
+
+        - Name: influxdb
+          Image: influxdb
+          PortMappings:
+            - ContainerPort: 8086
               HostPort: 80
-          Cpu: 102
-          Memory: 50
+          Cpu: 4096
+          Memory: 4096
+          MountPoints:
+            - SourceVolume: 'influxdb-data'
+              ContainerPath: '/var/lib/influxdb"'
+
+
+
+
 
 
 
